@@ -1,0 +1,2 @@
+defmodule MiniOban do
+end
