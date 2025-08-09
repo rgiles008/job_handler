@@ -7,8 +7,8 @@ defmodule MiniOban.JobSupervisor do
 
   def init(_) do
     children = [
-      {MiniOban.JobQueue, []},
-      {MiniOban.WorkerSupervisor, []}
+      {MiniOban.WorkerSupervisor, []},
+      {MiniOban.JobQueue, max_concurrency: 4}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
