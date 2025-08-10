@@ -9,11 +9,12 @@ and jobs are processing dynamically.
 1. in iex run `MiniOban.JobQueue.enqueue(fn -> IO.puts("Im a job") end)`
 2. or you can do something like
 ```elixir
-MiniOban.JobQueue.enqueue(fn ->
-    IO.puts("job #{i} starting")
-    Process.sleep(300)
-    if :rand.uniform() < 0.2, do: raise("boom #{i}")
-    IO.puts("job #{i} done")
+job_id =
+  MiniOban.JobQueue.enqueue(fn ->
+    IO.puts("work...")
+    Process.sleep(250)
+    if :rand.uniform() < 0.3, do: raise("boom")
+    IO.puts("done")
   end, attempts: 3)
 ```
 
