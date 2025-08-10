@@ -1,5 +1,5 @@
 import Config
 
 config :logger, :console,
-  format: "[$level] job_id=#{:job_id} $message\n",
+  format: "[$level] $metadata$message\n",
   metadata: [:job_id]

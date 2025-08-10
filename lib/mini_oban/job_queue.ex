@@ -21,6 +21,11 @@ defmodule MiniOban.JobQueue do
 
   def mark_retry(job_id, reason), do: GenServer.cast(__MODULE__, {:job_retry, job_id, reason})
 
+  def reset!, do: GenServer.call(__MODULE__, :reset)
+
+  def set_max_concurrency(n) when is_integer(n) and n > 0,
+    do: GenServer.call(__MODULE__, {:set_max_concurrency, n})
+
   def status(job_id) do
     case :ets.lookup(@table, job_id) do
       [{^job_id, status, inserted_at, finished_at, attempts_run, last_error}] ->
@@ -60,6 +65,20 @@ defmodule MiniOban.JobQueue do
     {:ok, state}
   end
 
+  def handle_call(:reset, _from, state) do
+    for {_, pid, _, _} <- DynamicSupervisor.which_children(MiniOban.WorkerSupervisor) do
+      Process.exit(pid, :kill)
+    end
+
+    if :ets.whereis(@table) != :undefined, do: :ets.delete_all_objects(@table)
+
+    {:reply, :ok, %{state | queue: :queue.new(), running: %{}}}
+  end
+
+  def handle_call({:set_max_concurrency, n}, _from, state) do
+    {:reply, :ok, %{state | max_concurrency: n} |> maybe_start_next()}
+  end
+
   def handle_call({:enqueue, job}, _from, state) do
     job_id = :erlang.unique_integer([:monotonic, :positive])
     inserted_at = System.monotonic_time(:millisecond)
@@ -76,6 +95,8 @@ defmodule MiniOban.JobQueue do
     new_state = %{state | running: Map.delete(state.running, ref)}
     {:noreply, maybe_start_next(new_state)}
   end
+
+  def handle_info(:drain, state), do: {:noreply, maybe_start_next(state)}
 
   def handle_cast({:job_done, job_id, result}, state) do
     finished_at = System.monotonic_time(:millisecond)
@@ -120,13 +141,33 @@ defmodule MiniOban.JobQueue do
             state
 
           {{:value, job}, q2} ->
-            {:ok, pid} = MiniOban.WorkerSupervisor.process(job)
-            ref = Process.monitor(pid)
+            case start_worker_job(job) do
+              {:ok, pid} ->
+                ref = Process.monitor(pid)
 
-            state
-            |> Map.put(:queue, q2)
-            |> Map.update!(:running, &Map.put(&1, ref, :running))
-            |> maybe_start_next()
+                state
+                |> Map.put(:queue, q2)
+                |> Map.update!(:running, &Map.put(&1, ref, :running))
+                |> maybe_start_next()
+
+              :retry ->
+                # worker supervisor not alive yet—try again shortly
+                Process.send_after(self(), :drain, 50)
+                state
+            end
+        end
+    end
+  end
+
+  defp start_worker_job(job) do
+    case Process.whereis(MiniOban.WorkerSupervisor) do
+      nil ->
+        :retry
+
+      _ ->
+        case MiniOban.WorkerSupervisor.process(job) do
+          {:ok, pid} -> {:ok, pid}
+          _ -> :retry
         end
     end
   end
